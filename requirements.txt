@@ -1,0 +1,6 @@
+Flask
+Flask-Cors
+SQLAlchemy
+pandas
+openpyxl
+reportlab
