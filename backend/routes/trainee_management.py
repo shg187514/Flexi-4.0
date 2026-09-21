@@ -1,3 +1,4 @@
+
 from datetime import datetime
 from flask import Blueprint, jsonify, request
 from sqlalchemy import func, case
@@ -48,7 +49,7 @@ def search_trainees():
                 "id": trainee.id,
                 "personal_no": trainee.personal_no,
                 "name": trainee.name,
-                "ticket_no": trainee.ticket_no,
+                "ticket_no": getattr(trainee, "ticket_no", "") or trainee.personal_no,
                 "batch_id": trainee.batch_id,
                 "batch_name": trainee.batch.batch_name if trainee.batch else ""
             })
@@ -75,7 +76,7 @@ def get_trainee_history(personal_no):
         trainee_info = {
             "personal_no": trainees[0].personal_no,
             "name": trainees[0].name,
-            "ticket_no": trainees[0].ticket_no,
+            "ticket_no": getattr(trainees[0], "ticket_no", "") or trainees[0].personal_no,
         }
         
         # Fetch all batches for this trainee
@@ -149,7 +150,7 @@ def get_trainee_details(trainee_id):
         return jsonify({
             "id": trainee.id,
             "name": trainee.name,
-            "ticket_no": trainee.ticket_no,
+            "ticket_no": getattr(trainee, "ticket_no", "") or trainee.personal_no,
             "personal_no": trainee.personal_no,
             "batch_id": batch.id,
             "batch_name": batch.batch_name,
@@ -190,11 +191,11 @@ def update_trainee(trainee_id):
                 _record_audit(db, trainee_id, "name", old_name, trainee.name)
         
         # Update ticket number
-        if "ticket_no" in payload:
-            old_ticket = trainee.ticket_no
-            trainee.ticket_no = payload["ticket_no"]
-            if old_ticket != trainee.ticket_no:
-                _record_audit(db, trainee_id, "ticket_no", old_ticket, trainee.ticket_no)
+        if "ticket_no" in payload and hasattr(trainee, "ticket_no"):
+            old_ticket = getattr(trainee, "ticket_no", "")
+            setattr(trainee, "ticket_no", payload["ticket_no"])
+            if old_ticket != payload["ticket_no"]:
+                _record_audit(db, trainee_id, "ticket_no", old_ticket, payload["ticket_no"])
         
         # Update batch category
         if "category" in payload:

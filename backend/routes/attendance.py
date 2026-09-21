@@ -3,6 +3,7 @@ from datetime import datetime
 import pandas as pd
 from flask import Blueprint, jsonify, request
 from models import Attendance, Batch, SessionLocal, Trainee, UploadHistory
+from utils.excel import read_any_excel
 
 attendance_bp = Blueprint("attendance", __name__)
 
@@ -18,30 +19,111 @@ def get_status_label(value):
     return "Present" if value in {"present", "p", "yes", "y", "1", "true"} else "Absent"
 
 
+
+@attendance_bp.route("/master-preview", methods=["GET"])
+def master_preview():
+    batch_id = request.args.get("batch_id")
+    if not batch_id:
+        return jsonify({"error": "Batch ID is required"}), 400
+
+    db = SessionLocal()
+    try:
+        batch = db.query(Batch).filter(Batch.id == int(batch_id)).first()
+        if not batch:
+            return jsonify({"error": "Batch not found"}), 404
+
+        trainees = db.query(Trainee).filter(Trainee.batch_id == batch.id).all()
+        preview_rows = []
+        for trainee in trainees:
+            attendance = trainee.attendance
+            raw_day1 = attendance.day1_status if attendance and attendance.day1_status else trainee.day1
+            raw_day2 = attendance.day2_status if attendance and attendance.day2_status else trainee.day2
+
+            day1 = get_status_label(raw_day1)
+            day2 = get_status_label(raw_day2)
+
+            preview_rows.append(
+                {
+                    "trainee_id": trainee.id,
+                    "name": trainee.name,
+                    "personal_no": trainee.personal_no,
+                    "day1": day1,
+                    "day2": day2,
+                }
+            )
+
+        return jsonify(
+            {
+                "preview": preview_rows,
+                "total_rows": len(preview_rows),
+                "batch_id": batch.id,
+                "batch_name": batch.batch_name,
+                "source": "Master Sheet",
+            }
+        ), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+    finally:
+        db.close()
+
+
+def matches_header(col_name, keywords):
+    if not col_name:
+        return False
+    s = str(col_name).strip().lower().replace(" ", "").replace("_", "").replace(".", "").replace("-", "")
+    return any(k in s for k in keywords)
+
+
+def find_attendance_columns(df):
+    cols = df.columns.tolist()
+
+    pno_col = next((c for c in cols if matches_header(c, ["personalno", "pno", "empid", "employeeid", "traineeid", "persno"])), None)
+    day1_col = next((c for c in cols if matches_header(c, ["day1", "d1"])), None)
+    day2_col = next((c for c in cols if matches_header(c, ["day2", "d2"])), None)
+
+    if not (pno_col and day1_col):
+        for idx in range(min(5, len(df))):
+            row_vals = df.iloc[idx].tolist()
+            pno_temp = next((v for v in row_vals if matches_header(v, ["personalno", "pno", "empid", "employeeid", "traineeid", "persno"])), None)
+            d1_temp = next((v for v in row_vals if matches_header(v, ["day1", "d1"])), None)
+            if pno_temp and d1_temp:
+                new_cols = [str(val).strip() for val in row_vals]
+                df = df.iloc[idx + 1:].copy()
+                df.columns = new_cols
+                cols = new_cols
+                pno_col = next((c for c in cols if matches_header(c, ["personalno", "pno", "empid", "employeeid", "traineeid", "persno"])), None)
+                day1_col = next((c for c in cols if matches_header(c, ["day1", "d1"])), None)
+                day2_col = next((c for c in cols if matches_header(c, ["day2", "d2"])), None)
+                break
+
+    name_col = next((c for c in cols if matches_header(c, ["name", "traineename", "studentname"])), None)
+    return df, pno_col, day1_col, day2_col, name_col
+
+
 @attendance_bp.route("/upload-preview", methods=["POST"])
 def upload_preview():
     file = request.files.get("file")
     batch_id = request.form.get("batch_id")
+    password = request.form.get("password")
     if not file:
         return jsonify({"error": "File is required"}), 400
     if not batch_id:
         return jsonify({"error": "Batch is required"}), 400
 
     try:
-        df = pd.read_excel(file, engine="openpyxl")
+        df = read_any_excel(file, password=password)
     except Exception as e:
         return jsonify({"error": f"Unable to read Excel file: {e}"}), 400
 
-    columns = [col.strip() for col in df.columns.tolist()]
-    if any(col not in columns for col in REQUIRED_COLUMNS):
-        return jsonify(
-            {"error": "Excel file must contain columns: Personal No, Day1, Day2"}
-        ), 400
+    df, pno_col, day1_col, day2_col, name_col = find_attendance_columns(df)
 
-    normalized = df.rename(columns={col: col.strip() for col in df.columns})
-    normalized = normalized[REQUIRED_COLUMNS].fillna("")
-    normalized = normalized.astype(str)
-    normalized = normalized.replace({"nan": "", "None": ""})
+    if not pno_col or not day1_col:
+        found_cols = [str(c) for c in df.columns.tolist()[:8]]
+        return jsonify(
+            {
+                "error": f"Excel file is missing required columns. Expected: Personal No (or P.NO.), Day1 (or Day 1), Day2. Found columns: {', '.join(found_cols)}"
+            }
+        ), 400
 
     db = SessionLocal()
     try:
@@ -50,10 +132,13 @@ def upload_preview():
             return jsonify({"error": "Batch not found"}), 404
 
         preview_rows = []
-        for _, row in normalized.iterrows():
-            personal_no = row["Personal No"].strip()
-            day1 = row["Day1"].strip()
-            day2 = row["Day2"].strip()
+        for _, row in df.iterrows():
+            personal_no = str(row[pno_col]).strip() if pno_col and pd.notna(row[pno_col]) else ""
+            if personal_no.endswith(".0"):
+                personal_no = personal_no[:-2]
+
+            day1 = str(row[day1_col]).strip() if day1_col and pd.notna(row[day1_col]) else ""
+            day2 = str(row[day2_col]).strip() if day2_col and day2_col in df.columns and pd.notna(row[day2_col]) else ""
             if not any([personal_no, day1, day2]):
                 continue
 
@@ -65,13 +150,12 @@ def upload_preview():
                 )
                 .first()
             )
-            if not trainee:
-                continue
+            name_val = trainee.name if trainee else (str(row[name_col]).strip() if name_col and pd.notna(row[name_col]) else "")
 
             preview_rows.append(
                 {
-                    "trainee_id": trainee.id,
-                    "name": trainee.name,
+                    "trainee_id": trainee.id if trainee else None,
+                    "name": name_val,
                     "personal_no": personal_no,
                     "day1": day1,
                     "day2": day2,
@@ -139,23 +223,28 @@ def import_attendance():
             if not trainee:
                 continue
 
-            existing = db.query(Attendance).filter(Attendance.trainee_id == trainee.id).first()
-            if existing:
-                continue
-
             day1 = get_status_label(row.get("day1", ""))
             day2 = get_status_label(row.get("day2", ""))
             status = "Present" if day1 == "Present" or day2 == "Present" else "Absent"
             remarks = f"Day1: {day1}; Day2: {day2}"
-            record = Attendance(
-                trainee_id=trainee.id,
-                attendance_date=datetime.utcnow().date(),
-                day1_status=day1,
-                day2_status=day2,
-                status=status,
-                remarks=remarks,
-            )
-            db.add(record)
+
+            existing = db.query(Attendance).filter(Attendance.trainee_id == trainee.id).first()
+            if existing:
+                existing.day1_status = day1
+                existing.day2_status = day2
+                existing.status = status
+                existing.remarks = remarks
+                existing.attendance_date = datetime.utcnow().date()
+            else:
+                record = Attendance(
+                    trainee_id=trainee.id,
+                    attendance_date=datetime.utcnow().date(),
+                    day1_status=day1,
+                    day2_status=day2,
+                    status=status,
+                    remarks=remarks,
+                )
+                db.add(record)
             imported_count += 1
 
         db.flush()
@@ -251,11 +340,11 @@ def attendance_summary():
     batch_id = request.args.get("batch_id")
     db = SessionLocal()
     try:
-        query = db.query(Attendance).join(Trainee, Attendance.trainee_id == Trainee.id)
         if batch_id:
-            query = query.filter(Trainee.batch_id == int(batch_id))
+            trainees = db.query(Trainee).filter(Trainee.batch_id == int(batch_id)).all()
+        else:
+            trainees = db.query(Trainee).all()
 
-        records = query.all()
         day1_present = 0
         day1_absent = 0
         day2_present = 0
@@ -263,27 +352,29 @@ def attendance_summary():
         total_present = 0
         total_absent = 0
 
-        for record in records:
-            # Parse day1 status
-            day1_status = (record.day1_status or "").strip().lower()
-            if day1_status == "present":
+        for trainee in trainees:
+            attendance = trainee.attendance
+            raw_day1 = (attendance.day1_status if attendance and attendance.day1_status else trainee.day1)
+            raw_day2 = (attendance.day2_status if attendance and attendance.day2_status else trainee.day2)
+
+            d1 = get_status_label(raw_day1)
+            d2 = get_status_label(raw_day2)
+
+            if d1 == "Present":
                 day1_present += 1
                 total_present += 1
-            elif day1_status == "absent":
+            else:
                 day1_absent += 1
                 total_absent += 1
 
-            # Parse day2 status
-            day2_status = (record.day2_status or "").strip().lower()
-            if day2_status == "present":
+            if d2 == "Present":
                 day2_present += 1
                 total_present += 1
-            elif day2_status == "absent":
+            else:
                 day2_absent += 1
                 total_absent += 1
 
-        # Calculate total opportunities and attendance percentage
-        total_opportunities = len(records) * 2  # 2 days per trainee
+        total_opportunities = len(trainees) * 2
         attendance_percentage = (total_present / total_opportunities * 100) if total_opportunities > 0 else 0
 
         return jsonify(

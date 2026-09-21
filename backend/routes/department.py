@@ -3,6 +3,7 @@ from datetime import datetime
 import pandas as pd
 from flask import Blueprint, jsonify, request
 from models import Batch, DepartmentAllocation, SessionLocal, Trainee, UploadHistory
+from utils.excel import read_any_excel
 
 department_bp = Blueprint("department", __name__)
 REQUIRED_COLUMNS = ["Personal No", "Department"]
@@ -38,7 +39,7 @@ def upload_preview():
         return jsonify({"error": "Batch is required"}), 400
 
     try:
-        df = pd.read_excel(file, engine="openpyxl")
+        df = read_any_excel(file)
     except Exception as e:
         return jsonify({"error": f"Unable to read Excel file: {e}"}), 400
 

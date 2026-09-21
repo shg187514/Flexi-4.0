@@ -1,10 +1,14 @@
 import os
+import sys
+import webbrowser
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
 from models import init_db
 
-app = Flask(__name__)
+dist_folder = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dist"))
+
+app = Flask(__name__, static_folder=dist_folder if os.path.exists(dist_folder) else None, static_url_path="")
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 init_db()
@@ -31,6 +35,17 @@ app.register_blueprint(report_bp, url_prefix="/api/reports")
 app.register_blueprint(dashboard_bp, url_prefix="/api/dashboard")
 app.register_blueprint(batch_bp, url_prefix="/api/batches")
 
+@app.route("/", defaults={"path": ""})
+@app.route("/<path:path>")
+def serve(path):
+    if app.static_folder and os.path.exists(app.static_folder):
+        if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
+            return send_from_directory(app.static_folder, path)
+        index_path = os.path.join(app.static_folder, "index.html")
+        if os.path.exists(index_path):
+            return send_from_directory(app.static_folder, "index.html")
+    return jsonify({"message": "Flexi Training System API running"}), 200
+
 @app.errorhandler(400)
 def bad_request(error):
     return jsonify({"error": "Bad request"}), 400
@@ -45,4 +60,25 @@ def internal_error(error):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5001"))
-    app.run(debug=True, host="0.0.0.0", port=port)
+    if os.environ.get("OPEN_BROWSER", "true").lower() in ("true", "1", "yes"):
+        import time
+        import threading
+        def open_browser():
+            time.sleep(1)
+            try:
+                webbrowser.open(f"http://localhost:{port}")
+            except Exception:
+                pass
+        threading.Thread(target=open_browser, daemon=True).start()
+
+    try:
+        app.run(debug=False, host="0.0.0.0", port=port)
+    except OSError as e:
+        if "already in use" in str(e).lower():
+            print(f"Flexi Training server is already running on port {port}. Opening browser at http://localhost:{port}")
+            try:
+                webbrowser.open(f"http://localhost:{port}")
+            except Exception:
+                pass
+        else:
+            raise e

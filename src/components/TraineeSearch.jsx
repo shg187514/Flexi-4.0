@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { getTraineeProfile, searchTrainees } from '../services/api'
 
 function AttendanceBadge({ status }) {
-  const bgColor = status && status.toLowerCase() === 'present' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'
-  return <span className={`inline-block rounded-full px-2 py-1 text-xs font-medium ${bgColor}`}>{status || '-'}</span>
+  const isPresent = status && ['present', 'p', 'yes', 'y', '1', 'true'].includes(String(status).trim().toLowerCase())
+  const label = isPresent ? 'Present' : 'Absent'
+  const bgColor = isPresent ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+  return <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${bgColor}`}>{label}</span>
 }
 
 function TraineeSearch() {

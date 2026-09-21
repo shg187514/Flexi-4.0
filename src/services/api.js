@@ -31,6 +31,9 @@ export const importTrainees = (payload) => api.post('/trainees/import', payload)
 export const getUploadHistory = () => api.get('/trainees/upload-history')
 export const deleteUploadHistory = (id) => api.delete(`/trainees/upload-history/${id}`)
 
+export const getAttendanceMasterPreview = (batchId) => api.get('/attendance/master-preview', {
+  params: { batch_id: batchId }
+})
 export const uploadAttendancePreview = (formData) => api.post('/attendance/upload-preview', formData, {
   headers: { 'Content-Type': 'multipart/form-data' }
 })

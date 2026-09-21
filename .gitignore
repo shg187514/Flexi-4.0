@@ -22,3 +22,23 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+# Node / Frontend dependencies
+node_modules/ 
+dist/
+dist-ssr/
+*.local
+#Python / Backend dependencies and virtual environments
+backend/venv/
+venv/
+ENV
+env/
+__pycache__/
+*.py[code]
+*$py.class
+# Environment configurations and secrets
+.env
+.env.*
+
+# System / Editor files
+.DS_Store
+Thumbs.db

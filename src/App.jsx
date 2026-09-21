@@ -19,7 +19,7 @@ const sidebarItems = [
   { to: '/trainees', label: 'Trainee Upload' },
   { to: '/trainee-history', label: 'Trainee History' },
   { to: '/attendance', label: 'Attendance' },
-  { to: '/faculty', label: 'Faculty Reports' },
+  { to: '/faculty', label: 'Trainer Sessions' },
   { to: '/pretest', label: 'Pre-Test' },
   { to: '/posttest', label: 'Post-Test' },
   { to: '/department', label: 'Department Allocation' },

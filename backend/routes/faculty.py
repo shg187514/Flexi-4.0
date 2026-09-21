@@ -1,11 +1,25 @@
+import re
 from datetime import datetime
 
 import pandas as pd
 from flask import Blueprint, jsonify, request
 from models import Batch, FacultySession, SessionLocal, UploadHistory
+from utils.excel import read_any_excel
 
 faculty_bp = Blueprint("faculty", __name__)
-REQUIRED_COLUMNS = ["Date", "Faculty Name", "Subject", "Start Time", "End Time"]
+REQUIRED_COLUMNS = ["Start Date", "End Date", "Trainer Name", "Subject"]
+
+
+def parse_date_val(val):
+    if not val or pd.isna(val):
+        return None
+    val_str = str(val).strip()
+    if not val_str or val_str.lower() in {"nan", "none", "nat"}:
+        return None
+    try:
+        return pd.to_datetime(val_str).date()
+    except Exception:
+        return None
 
 
 def faculty_to_dict(session):
@@ -13,11 +27,12 @@ def faculty_to_dict(session):
         "id": session.id,
         "batch_id": session.batch_id,
         "faculty_name": session.faculty_name,
-        "session_date": session.session_date.isoformat() if session.session_date else None,
+        "trainer_name": session.faculty_name,
+        "start_date": session.start_date.isoformat() if session.start_date else (session.session_date.isoformat() if session.session_date else None),
+        "end_date": session.end_date.isoformat() if session.end_date else (session.session_date.isoformat() if session.session_date else None),
         "topic": session.topic,
+        "subject": session.topic,
         "notes": session.notes,
-        "start_time": session.start_time if hasattr(session, 'start_time') else None,
-        "end_time": session.end_time if hasattr(session, 'end_time') else None,
     }
 
 
@@ -36,14 +51,19 @@ def create_session():
     data = request.get_json(silent=True) or {}
     db = SessionLocal()
     try:
+        start_date = parse_date_val(data.get("start_date"))
+        end_date = parse_date_val(data.get("end_date"))
+        trainer_name = data.get("trainer_name") or data.get("faculty_name") or ""
+        subject = data.get("subject") or data.get("topic") or ""
+
         session = FacultySession(
             batch_id=data.get("batch_id"),
-            faculty_name=data.get("faculty_name"),
-            session_date=data.get("session_date"),
-            topic=data.get("subject"),
-            notes=data.get("notes"),
-            start_time=data.get("start_time"),
-            end_time=data.get("end_time")
+            faculty_name=trainer_name,
+            start_date=start_date,
+            end_date=end_date,
+            session_date=start_date,
+            topic=subject,
+            notes=data.get("notes", ""),
         )
         db.add(session)
         db.commit()
@@ -64,9 +84,20 @@ def update_session(session_id):
         session = db.query(FacultySession).filter(FacultySession.id == session_id).first()
         if not session:
             return jsonify({"error": "Session not found"}), 404
-        for field in ["batch_id", "faculty_name", "session_date", "topic", "notes", "start_time", "end_time"]:
-            if field in data:
-                setattr(session, field, data[field])
+
+        if "trainer_name" in data or "faculty_name" in data:
+            session.faculty_name = data.get("trainer_name") or data.get("faculty_name") or session.faculty_name
+        if "subject" in data or "topic" in data:
+            session.topic = data.get("subject") or data.get("topic") or session.topic
+        if "start_date" in data:
+            session.start_date = parse_date_val(data["start_date"])
+        if "end_date" in data:
+            session.end_date = parse_date_val(data["end_date"])
+        if "batch_id" in data:
+            session.batch_id = data["batch_id"]
+        if "notes" in data:
+            session.notes = data["notes"]
+
         db.commit()
         db.refresh(session)
         return jsonify(faculty_to_dict(session)), 200
@@ -94,28 +125,50 @@ def delete_session(session_id):
         db.close()
 
 
+
+def normalize_batch_str(val):
+    if val is None or pd.isna(val):
+        return ""
+    s = str(val).strip().lower()
+    s = re.sub(r"^batch\s*", "", s)
+    if s.endswith(".0"):
+        s = s[:-2]
+    return s
+
+
 @faculty_bp.route("/upload-preview", methods=["POST"])
 def upload_preview():
     file = request.files.get("file")
     batch_id = request.form.get("batch_id")
+    password = request.form.get("password")
+
     if not file:
         return jsonify({"error": "File is required"}), 400
     if not batch_id:
         return jsonify({"error": "Batch is required"}), 400
 
     try:
-        df = pd.read_excel(file, engine="openpyxl")
+        df = read_any_excel(file, password=password)
     except Exception as e:
         return jsonify({"error": f"Unable to read Excel file: {e}"}), 400
 
-    columns = [col.strip() for col in df.columns.tolist()]
-    if any(col not in columns for col in REQUIRED_COLUMNS):
-        return jsonify({"error": "Excel file must contain columns: Date, Faculty Name, Subject, Start Time, End Time"}), 400
+    # Normalize column headers
+    norm_map = {str(col).strip().lower().replace(" ", "").replace("_", ""): col for col in df.columns}
 
-    normalized = df.rename(columns={col: col.strip() for col in df.columns})
-    normalized = normalized[REQUIRED_COLUMNS].fillna("")
-    normalized = normalized.astype(str)
-    normalized = normalized.replace({"nan": "", "None": ""})
+    start_date_col = norm_map.get("startdate") or norm_map.get("date")
+    end_date_col = norm_map.get("enddate") or norm_map.get("date")
+    trainer_col = norm_map.get("trainername") or norm_map.get("facultyname") or norm_map.get("trainer")
+    subject_col = norm_map.get("subject") or norm_map.get("topic") or norm_map.get("subarea")
+    batch_col = norm_map.get("batch") or norm_map.get("batchno") or norm_map.get("batchid") or norm_map.get("batchname")
+
+    missing = []
+    if not start_date_col and not end_date_col:
+        missing.append("Start Date")
+    if not trainer_col:
+        missing.append("Trainer Name")
+
+    if missing:
+        return jsonify({"error": f"Excel file is missing required columns: {', '.join(missing)}"}), 400
 
     db = SessionLocal()
     try:
@@ -123,25 +176,40 @@ def upload_preview():
         if not batch:
             return jsonify({"error": "Batch not found"}), 404
 
+        target_norm_name = normalize_batch_str(batch.batch_name)
+        target_norm_id = str(batch.id)
+
         preview_rows = []
-        for _, row in normalized.iterrows():
-            date_value = row["Date"].strip()
-            faculty_name = row["Faculty Name"].strip()
-            subject = row["Subject"].strip()
-            start_time = row["Start Time"].strip()
-            end_time = row["End Time"].strip()
-            if not any([date_value, faculty_name, subject, start_time, end_time]):
+        for _, row in df.iterrows():
+            # If batch column exists in Excel, filter rows that match the selected batch
+            if batch_col:
+                row_batch_str = str(row[batch_col]).strip() if pd.notna(row[batch_col]) else ""
+                row_batch_norm = normalize_batch_str(row_batch_str)
+                if row_batch_norm and target_norm_name:
+                    if row_batch_norm != target_norm_name and row_batch_norm != target_norm_id and target_norm_name not in row_batch_norm:
+                        continue
+
+            start_val = str(row[start_date_col]).strip() if start_date_col and pd.notna(row[start_date_col]) else ""
+            end_val = str(row[end_date_col]).strip() if end_date_col and pd.notna(row[end_date_col]) else ""
+            trainer_val = str(row[trainer_col]).strip() if trainer_col and pd.notna(row[trainer_col]) else ""
+            subject_val = str(row[subject_col]).strip() if subject_col and pd.notna(row[subject_col]) else ""
+
+            if not any([start_val, end_val, trainer_val, subject_val]):
                 continue
+
+            parsed_start = parse_date_val(start_val)
+            parsed_end = parse_date_val(end_val)
+
             preview_rows.append({
-                "date": date_value,
-                "faculty_name": faculty_name,
-                "subject": subject,
-                "start_time": start_time,
-                "end_time": end_time,
+                "start_date": str(parsed_start) if parsed_start else start_val,
+                "end_date": str(parsed_end) if parsed_end else (end_val or (str(parsed_start) if parsed_start else start_val)),
+                "trainer_name": trainer_val or "Unassigned Trainer",
+                "faculty_name": trainer_val or "Unassigned Trainer",
+                "subject": subject_val or "General",
             })
 
         history = UploadHistory(
-            module_name="Faculty Upload",
+            module_name="Trainer Session Upload",
             batch_id=batch.id,
             file_name=file.filename,
             file_path="",
@@ -150,7 +218,7 @@ def upload_preview():
             uploaded_at=datetime.utcnow(),
             total_records=len(preview_rows),
             status="Previewed",
-            notes=f"Previewed {len(preview_rows)} faculty sessions",
+            notes=f"Previewed {len(preview_rows)} trainer sessions for {batch.batch_name}",
         )
         db.add(history)
         db.commit()
@@ -174,7 +242,7 @@ def import_sessions():
     data = request.get_json(silent=True) or {}
     batch_id = data.get("batch_id")
     rows = data.get("rows", [])
-    file_name = data.get("file_name", "faculty_session_import")
+    file_name = data.get("file_name", "trainer_session_import")
 
     if not batch_id or not rows:
         return jsonify({"error": "Batch and rows are required"}), 400
@@ -185,41 +253,31 @@ def import_sessions():
         if not batch:
             return jsonify({"error": "Batch not found"}), 404
 
+        # Overwrite existing sessions for this batch upon re-importing
+        db.query(FacultySession).filter(FacultySession.batch_id == batch.id).delete(synchronize_session=False)
+
         imported_count = 0
         for row in rows:
-            date_value = row.get("date")
-            faculty_name = row.get("faculty_name")
-            subject = row.get("subject")
-            start_time = row.get("start_time")
-            end_time = row.get("end_time")
-            if not faculty_name or not subject:
-                continue
-
-            session_date = None
-            if date_value:
-                try:
-                    session_date = datetime.strptime(str(date_value), "%Y-%m-%d").date()
-                except Exception:
-                    try:
-                        session_date = datetime.strptime(str(date_value), "%m/%d/%Y").date()
-                    except Exception:
-                        session_date = datetime.utcnow().date()
+            trainer_name = str(row.get("trainer_name") or row.get("faculty_name") or "").strip() or "Unassigned Trainer"
+            subject = str(row.get("subject") or row.get("topic") or "").strip() or "General"
+            start_date_val = parse_date_val(row.get("start_date"))
+            end_date_val = parse_date_val(row.get("end_date")) or start_date_val
 
             session = FacultySession(
                 batch_id=batch.id,
-                faculty_name=faculty_name,
-                session_date=session_date,
+                faculty_name=trainer_name,
+                start_date=start_date_val,
+                end_date=end_date_val,
+                session_date=start_date_val,
                 topic=subject,
                 notes="",
-                start_time=start_time,
-                end_time=end_time,
             )
             db.add(session)
             imported_count += 1
 
         db.flush()
         history = UploadHistory(
-            module_name="Faculty Upload",
+            module_name="Trainer Session Upload",
             batch_id=batch.id,
             file_name=file_name,
             file_path="",
@@ -228,11 +286,11 @@ def import_sessions():
             uploaded_at=datetime.utcnow(),
             total_records=imported_count,
             status="Imported",
-            notes=f"Imported {imported_count} faculty sessions",
+            notes=f"Imported {imported_count} trainer sessions for {batch.batch_name}",
         )
         db.add(history)
         db.commit()
-        return jsonify({"message": f"Imported {imported_count} faculty sessions"}), 201
+        return jsonify({"message": f"Successfully imported {imported_count} trainer sessions for {batch.batch_name}"}), 201
     except Exception as e:
         db.rollback()
         return jsonify({"error": str(e)}), 400

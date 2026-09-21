@@ -34,7 +34,7 @@ def _get_day2_status(attendance):
     return attendance.day2_status or ""
 
 
-def _build_preview_rows_for_report(db, report_type, from_date, to_date, batch_id, category):
+def _build_preview_rows_for_report(db, report_type, from_date, to_date, batch_id, category, trainer_name=None, subject=None):
     if report_type == "complete_induction":
         query = db.query(Trainee, Batch, Attendance, PreTest, PostTest, DepartmentAllocation)
         query = query.outerjoin(Batch, Trainee.batch_id == Batch.id)
@@ -63,7 +63,7 @@ def _build_preview_rows_for_report(db, report_type, from_date, to_date, batch_id
             preview.append(
                 {
                     "Name": trainee.name,
-                    "Ticket No": trainee.ticket_no,
+                    "Ticket No": getattr(trainee, "ticket_no", "") or trainee.personal_no,
                     "Personal No": trainee.personal_no,
                     "Batch": batch.batch_name if batch else "",
                     "Category": batch.category if batch else "",
@@ -102,26 +102,52 @@ def _build_preview_rows_for_report(db, report_type, from_date, to_date, batch_id
             for trainee, batch, attendance in query.all()
         ]
 
-    if report_type == "faculty":
+    if report_type in {"faculty", "trainer"}:
         query = db.query(FacultySession, Batch)
-        query = query.join(Batch, FacultySession.batch_id == Batch.id)
-        if from_date:
-            query = query.filter(Batch.start_date >= from_date)
-        if to_date:
-            query = query.filter(Batch.end_date <= to_date)
+        query = query.outerjoin(Batch, FacultySession.batch_id == Batch.id)
+        if from_date and to_date and from_date == to_date:
+            single_d = from_date
+            query = query.filter(
+                or_(
+                    FacultySession.start_date == single_d,
+                    FacultySession.session_date == single_d,
+                    Batch.start_date == single_d,
+                )
+            )
+        else:
+            if from_date:
+                query = query.filter(
+                    or_(
+                        FacultySession.start_date >= from_date,
+                        FacultySession.session_date >= from_date,
+                        Batch.start_date >= from_date,
+                    )
+                )
+            if to_date:
+                query = query.filter(
+                    or_(
+                        FacultySession.end_date <= to_date,
+                        FacultySession.session_date <= to_date,
+                        Batch.end_date <= to_date,
+                    )
+                )
         if batch_id:
             query = query.filter(FacultySession.batch_id == batch_id)
         if category:
             query = query.filter(Batch.category == category)
+        if trainer_name and str(trainer_name).strip():
+            query = query.filter(FacultySession.faculty_name.ilike(f"%{str(trainer_name).strip()}%"))
+        if subject and str(subject).strip():
+            query = query.filter(FacultySession.topic.ilike(f"%{str(subject).strip()}%"))
         return [
             {
-                "Faculty Name": session.faculty_name,
-                "Batch": batch.batch_name,
-                "Category": batch.category,
-                "Session Date": session.session_date.isoformat() if session.session_date else "",
-                "Topic": session.topic,
-                "Start Time": session.start_time,
-                "End Time": session.end_time,
+                "Trainer Name": session.faculty_name,
+                "Batch": batch.batch_name if batch else "",
+                "Category": batch.category if batch else "",
+                "Start Date": session.start_date.isoformat() if session.start_date else (session.session_date.isoformat() if session.session_date else ""),
+                "End Date": session.end_date.isoformat() if session.end_date else (session.session_date.isoformat() if session.session_date else ""),
+                "Subject": session.topic,
+                "Notes": session.notes or "",
             }
             for session, batch in query.all()
         ]
@@ -204,6 +230,8 @@ def preview_report():
     to_date = _parse_date(payload.get("to_date"))
     batch_id = payload.get("batch_id")
     category = payload.get("category")
+    trainer_name = payload.get("trainer_name")
+    subject = payload.get("subject")
 
     db = SessionLocal()
     try:
@@ -214,6 +242,8 @@ def preview_report():
             to_date,
             batch_id,
             category,
+            trainer_name=trainer_name,
+            subject=subject,
         )
         if preview is None:
             return jsonify({"error": "Invalid report type"}), 400
@@ -230,10 +260,21 @@ def export_excel():
     to_date = _parse_date(payload.get("to_date"))
     batch_id = payload.get("batch_id")
     category = payload.get("category")
+    trainer_name = payload.get("trainer_name")
+    subject = payload.get("subject")
 
     db = SessionLocal()
     try:
-        rows = _get_rows_for_report(db, report_type, from_date, to_date, batch_id, category)
+        rows = _get_rows_for_report(
+            db,
+            report_type,
+            from_date,
+            to_date,
+            batch_id,
+            category,
+            trainer_name=trainer_name,
+            subject=subject,
+        )
         df = pd.DataFrame(rows)
         output = BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -257,10 +298,21 @@ def export_pdf():
     to_date = _parse_date(payload.get("to_date"))
     batch_id = payload.get("batch_id")
     category = payload.get("category")
+    trainer_name = payload.get("trainer_name")
+    subject = payload.get("subject")
 
     db = SessionLocal()
     try:
-        rows = _get_rows_for_report(db, report_type, from_date, to_date, batch_id, category)
+        rows = _get_rows_for_report(
+            db,
+            report_type,
+            from_date,
+            to_date,
+            batch_id,
+            category,
+            trainer_name=trainer_name,
+            subject=subject,
+        )
         output = BytesIO()
         doc = SimpleDocTemplate(output, pagesize=letter)
         styles = getSampleStyleSheet()
@@ -290,9 +342,7 @@ def export_pdf():
         db.close()
 
 
-# helper to fetch rows for both preview and exports
-
-def _get_rows_for_report(db, report_type, from_date, to_date, batch_id, category):
+def _get_rows_for_report(db, report_type, from_date, to_date, batch_id, category, trainer_name=None, subject=None):
     return _build_preview_rows_for_report(
         db,
         report_type,
@@ -300,4 +350,6 @@ def _get_rows_for_report(db, report_type, from_date, to_date, batch_id, category
         to_date,
         batch_id,
         category,
+        trainer_name=trainer_name,
+        subject=subject,
     )

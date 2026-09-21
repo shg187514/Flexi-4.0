@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Flexi Training Management System
+Comment=Launch Flexi Training System
+Exec=/bin/bash -c 'cd "$(dirname "$1")" && ./start.sh' _ %k
+Icon=utilities-terminal
+Terminal=false
+Categories=Application;Development;
+StartupNotify=true

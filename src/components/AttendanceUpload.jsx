@@ -4,6 +4,7 @@ import ConfirmModal from './ConfirmModal'
 import {
   deleteAttendanceHistory,
   getAttendanceHistory,
+  getAttendanceMasterPreview,
   getAttendanceSummary,
   getBatches,
   importAttendance,
@@ -15,6 +16,7 @@ function AttendanceUpload() {
   const [selectedFile, setSelectedFile] = useState(null)
   const [isDragging, setIsDragging] = useState(false)
   const [previewRows, setPreviewRows] = useState([])
+  const [previewSource, setPreviewSource] = useState('')
   const [history, setHistory] = useState([])
   const [summary, setSummary] = useState({
     day1_present: 0,
@@ -59,6 +61,23 @@ function AttendanceUpload() {
     }
   }, [])
 
+  const fetchMasterPreview = useCallback(async (batchId) => {
+    if (!batchId) {
+      setPreviewRows([])
+      setPreviewSource('')
+      return
+    }
+    try {
+      const response = await getAttendanceMasterPreview(batchId)
+      setPreviewRows(response.data.preview || [])
+      setPreviewSource('Master Sheet')
+      setMessage(`Loaded Personal No, Day 1, Day 2 from Master Excel for ${response.data.batch_name} (${response.data.total_rows} trainees)`)
+      setError('')
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Unable to fetch master preview for batch')
+    }
+  }, [])
+
   useEffect(() => {
     fetchBatches()
   }, [fetchBatches])
@@ -66,7 +85,7 @@ function AttendanceUpload() {
   useEffect(() => {
     fetchSummary()
     fetchHistory()
-  }, [fetchSummary, fetchHistory])
+  }, [selectedBatchId, fetchSummary, fetchHistory])
 
   const validateFile = (file) => {
     if (!file) return false
@@ -95,7 +114,9 @@ function AttendanceUpload() {
     try {
       const response = await uploadAttendancePreview(formData)
       setPreviewRows(response.data.preview || [])
-      setMessage(`Preview loaded with ${response.data.total_rows} rows`)
+      setPreviewSource('Uploaded File')
+      setMessage(`Preview loaded from file with ${response.data.total_rows} rows`)
+      setError('')
     } catch (err) {
       setError(err?.response?.data?.error || 'Preview failed')
     }
@@ -111,12 +132,13 @@ function AttendanceUpload() {
       const response = await importAttendance({
         batch_id: selectedBatchId,
         rows: previewRows,
-        file_name: selectedFile?.name || 'attendance_import'
+        file_name: selectedFile?.name || `Master_Sheet_Batch_${selectedBatchId}`
       })
       setMessage(response.data.message || 'Attendance imported successfully')
       setPreviewRows([])
+      setPreviewSource('')
       setSelectedFile(null)
-      reset()
+      reset({ batch_id: selectedBatchId })
       fetchSummary()
       fetchHistory()
     } catch (err) {
@@ -220,26 +242,52 @@ function AttendanceUpload() {
 
             {previewRows.length > 0 && (
               <div className="mt-6 overflow-hidden rounded-lg border border-slate-200">
-                <div className="flex items-center justify-between bg-slate-50 px-4 py-2">
-                  <h2 className="text-sm font-semibold text-slate-700">Preview ({totalPreviewCount})</h2>
+                <div className="flex items-center justify-between bg-slate-50 px-4 py-2 border-b border-slate-200">
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-sm font-semibold text-slate-700">Preview ({totalPreviewCount})</h2>
+                    {previewSource && (
+                      <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-800">
+                        {previewSource}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className="max-h-96 overflow-auto">
                   <table className="min-w-full divide-y divide-slate-200 text-sm">
                     <thead className="bg-slate-50">
                       <tr>
                         <th className="px-4 py-2 text-left">Personal No</th>
-                        <th className="px-4 py-2 text-left">Day1</th>
-                        <th className="px-4 py-2 text-left">Day2</th>
+                        <th className="px-4 py-2 text-left">Name</th>
+                        <th className="px-4 py-2 text-left">Day 1</th>
+                        <th className="px-4 py-2 text-left">Day 2</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {previewRows.map((row, index) => (
-                        <tr key={index} className="border-t">
-                          <td className="px-4 py-2">{row.personal_no}</td>
-                          <td className="px-4 py-2">{row.day1}</td>
-                          <td className="px-4 py-2">{row.day2}</td>
-                        </tr>
-                      ))}
+                      {previewRows.map((row, index) => {
+                        const day1Status = !row.day1 ? 'Absent' : (['present', 'p', 'yes', 'y', '1', 'true'].includes(String(row.day1).trim().toLowerCase()) ? 'Present' : 'Absent')
+                        const day2Status = !row.day2 ? 'Absent' : (['present', 'p', 'yes', 'y', '1', 'true'].includes(String(row.day2).trim().toLowerCase()) ? 'Present' : 'Absent')
+
+                        return (
+                          <tr key={index} className="border-t hover:bg-slate-50">
+                            <td className="px-4 py-2 font-mono text-xs">{row.personal_no}</td>
+                            <td className="px-4 py-2 font-medium text-slate-900">{row.name || '-'}</td>
+                            <td className="px-4 py-2">
+                              <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                                day1Status === 'Present' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                              }`}>
+                                {day1Status}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2">
+                              <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                                day2Status === 'Present' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                              }`}>
+                                {day2Status}
+                              </span>
+                            </td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>

@@ -12,7 +12,7 @@ import {
   uploadPreview
 } from '../services/api'
 
-const REQUIRED_COLUMNS = ['Name', 'Ticket No', 'Personal No']
+const REQUIRED_COLUMNS = ['Sr.', 'P.NO.', 'NAME', 'Gender', 'Batch', 'Grade', 'Start Date', 'End Date', 'DAY1', 'DAY2', 'DAY3', 'DAY5', 'DAY6', 'Bolt Tightening', 'Nut Tightening', 'Screw Tightening', 'Screw Grommet', 'Plug Hole Grommet', 'Connector Connection', 'Hose Fitment', 'Flare Nut Tight', 'Theory', 'Total', 'Re Test', 'Exam Grade', 'Trainer Name', 'SUB AREA']
 
 function TraineeUpload() {
   const [batches, setBatches] = useState([])
@@ -27,11 +27,8 @@ function TraineeUpload() {
   const [error, setError] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(null)
 
-  const { register, handleSubmit, watch, reset } = useForm({
-    defaultValues: { batch_id: '' }
-  })
+  const { reset } = useForm()
 
-  const selectedBatchId = watch('batch_id')
 
   const fetchBatches = useCallback(async () => {
     try {
@@ -108,45 +105,55 @@ function TraineeUpload() {
     onFileSelect(file)
   }
 
+  const [filePassword, setFilePassword] = useState('')
+
   const handlePreview = async () => {
-    if (!selectedFile || !selectedBatchId) {
-      setError('Please select a batch and choose a file')
+    if (!selectedFile) {
+      setError('Please choose an Excel file')
       return
     }
 
     const formData = new FormData()
     formData.append('file', selectedFile)
-    formData.append('batch_id', selectedBatchId)
+    if (filePassword) {
+      formData.append('password', filePassword)
+    }
 
     try {
       const response = await uploadPreview(formData)
       setPreviewRows(response.data.preview || [])
       setPreviewMeta(response.data)
       setMessage(`Preview loaded for ${response.data.total_rows} records`)
+      setError('')
     } catch (err) {
       setError(err?.response?.data?.error || 'Preview failed')
     }
   }
 
   const handleImport = async () => {
-    if (!previewMeta || !selectedBatchId) return
+  if (!previewMeta || !previewRows.length) return
 
-    try {
-      const response = await importTrainees({
-        batch_id: selectedBatchId,
-        rows: previewRows,
-        file_name: previewMeta?.file_name || selectedFile?.name || 'trainee_import'
-      })
-      setMessage(response.data.message || 'Import completed')
-      setPreviewRows([])
-      setPreviewMeta(null)
-      setSelectedFile(null)
-      reset()
-      fetchUploadHistory()
-    } catch (err) {
-      setError(err?.response?.data?.error || 'Import failed')
-    }
+  try {
+    const response = await importTrainees({
+      rows: previewRows,
+      file_name: previewMeta?.file_name || selectedFile?.name || 'trainee_import'
+    })
+
+    setMessage(response.data.message || 'Import completed')
+
+    setPreviewRows([])
+    setPreviewMeta(null)
+    setSelectedFile(null)
+
+    reset()
+
+    fetchUploadHistory()
+    fetchBatches()
+  } catch (err) {
+    setError(err?.response?.data?.error || 'Import failed')
   }
+}
+
 
   const handleDeleteUpload = async () => {
     if (!confirmDelete?.id) return
@@ -204,22 +211,6 @@ function TraineeUpload() {
         <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
           <section className="rounded-xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
             <div className="mb-4 flex flex-wrap gap-3">
-              <select
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                {...register('batch_id')}
-              >
-                <option value="">Select Batch</option>
-                {batches.map((batch) => (
-                  <option key={batch.id} value={batch.id}>{batch.batch_name}</option>
-                ))}
-              </select>
-              <button
-                onClick={() => setConfirmDelete({ id: selectedBatchId, type: 'batch', label: 'selected batch' })}
-                className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white"
-                disabled={!selectedBatchId}
-              >
-                Delete Selected Batch
-              </button>
               <button
                 onClick={handleDownloadTemplate}
                 className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white"
@@ -254,14 +245,30 @@ function TraineeUpload() {
               </label>
             </div>
 
+            {selectedFile && (
+              <div className="mt-4">
+                <label className="mb-1 block text-xs font-medium text-slate-600">
+                  Excel File Password (if encrypted/password-protected)
+                </label>
+                <input
+                  type="password"
+                  value={filePassword}
+                  onChange={(e) => setFilePassword(e.target.value)}
+                  placeholder="Enter file password if protected"
+                  className="w-full max-w-sm rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+                />
+              </div>
+            )}
+
             <div className="mt-4 flex gap-3">
               <button
                 onClick={handlePreview}
                 className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                disabled={!selectedFile || !selectedBatchId}
+                disabled={!selectedFile}
               >
                 Preview Data
               </button>
+              
               <button
                 onClick={handleImport}
                 className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
@@ -279,21 +286,52 @@ function TraineeUpload() {
                 <div className="max-h-96 overflow-auto">
                   <table className="min-w-full divide-y divide-slate-200 text-sm">
                     <thead className="bg-slate-50">
-                      <tr>
-                        <th className="px-4 py-2 text-left">Name</th>
-                        <th className="px-4 py-2 text-left">Ticket No</th>
-                        <th className="px-4 py-2 text-left">Personal No</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {previewRows.map((row, index) => (
-                        <tr key={index} className="border-t">
-                          <td className="px-4 py-2">{row.name}</td>
-                          <td className="px-4 py-2">{row.ticket_no}</td>
-                          <td className="px-4 py-2">{row.personal_no}</td>
-                        </tr>
-                      ))}
-                    </tbody>
+  <tr>
+    {REQUIRED_COLUMNS.map((column) => (
+      <th key={column} className="whitespace-nowrap px-4 py-2 text-left">{column}</th>
+    ))}
+  </tr>
+</thead>
+
+<tbody>
+  {previewRows.map((row, index) => (
+    <tr key={index} className="border-t">
+      {REQUIRED_COLUMNS.map((column) => {
+        const keyMap = {
+          'Sr.': 'sr',
+          'P.NO.': 'personal_no',
+          'NAME': 'name',
+          'Gender': 'gender',
+          'Batch': 'batch_name',
+          'Grade': 'grade',
+          'Start Date': 'start_date',
+          'End Date': 'end_date',
+          'DAY1': 'day1',
+          'DAY2': 'day2',
+          'DAY3': 'day3',
+          'DAY5': 'day5',
+          'DAY6': 'day6',
+          'Bolt Tightening': 'bolt_tightening',
+          'Nut Tightening': 'nut_tightening',
+          'Screw Tightening': 'screw_tightening',
+          'Screw Grommet': 'screw_grommet',
+          'Plug Hole Grommet': 'plug_hole_grommet',
+          'Connector Connection': 'connector_connection',
+          'Hose Fitment': 'hose_fitment',
+          'Flare Nut Tight': 'flare_nut_tight',
+          'Theory': 'theory',
+          'Total': 'total',
+          'Re Test': 're_test',
+          'Exam Grade': 'exam_grade',
+          'Trainer Name': 'trainer_name',
+          'SUB AREA': 'sub_area'
+        }
+        return <td key={column} className="whitespace-nowrap px-4 py-2">{row[keyMap[column]] ?? ''}</td>
+      })}
+    </tr>
+  ))}
+</tbody>
+
                   </table>
                 </div>
               </div>
@@ -307,14 +345,14 @@ function TraineeUpload() {
                 type="text"
                 value={search}
                 onChange={(e) => handleSearch(e.target.value)}
-                placeholder="Search by name, ticket, or personal no"
+                placeholder="Search by name or personal no"
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
               />
               <div className="mt-3 max-h-64 space-y-2 overflow-auto">
                 {searchResults.map((trainee) => (
                   <div key={trainee.id} className="rounded-md bg-slate-50 p-2 text-sm">
                     <p className="font-medium">{trainee.name}</p>
-                    <p className="text-slate-500">{trainee.ticket_no} · {trainee.personal_no}</p>
+                    <p className="text-slate-500">{trainee.personal_no} · {trainee.batch_name || ''}</p>
                   </div>
                 ))}
               </div>

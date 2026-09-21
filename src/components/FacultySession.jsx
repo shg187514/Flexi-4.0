@@ -11,16 +11,16 @@ function FacultySession() {
   const [sessions, setSessions] = useState([])
   const [history, setHistory] = useState([])
   const [selectedFile, setSelectedFile] = useState(null)
+  const [filePassword, setFilePassword] = useState('')
   const [isDragging, setIsDragging] = useState(false)
   const [previewRows, setPreviewRows] = useState([])
   const [showManualForm, setShowManualForm] = useState(false)
   const [form, setForm] = useState({
     batch_id: '',
-    faculty_name: '',
-    session_date: '',
+    trainer_name: '',
+    start_date: '',
+    end_date: '',
     subject: '',
-    start_time: '',
-    end_time: '',
     notes: ''
   })
   const [editingId, setEditingId] = useState(null)
@@ -48,7 +48,7 @@ function FacultySession() {
       const response = await axios.get(`${API}/faculty`)
       setSessions(response.data)
     } catch (err) {
-      setError('Unable to load sessions')
+      setError('Unable to load trainer sessions')
     }
   }
 
@@ -75,11 +75,10 @@ function FacultySession() {
   const resetForm = () => {
     setForm({
       batch_id: '',
-      faculty_name: '',
-      session_date: '',
+      trainer_name: '',
+      start_date: '',
+      end_date: '',
       subject: '',
-      start_time: '',
-      end_time: '',
       notes: ''
     })
     setEditingId(null)
@@ -94,15 +93,15 @@ function FacultySession() {
       }
       if (editingId) {
         await axios.put(`${API}/faculty/${editingId}`, payload)
-        setMessage('Session updated')
+        setMessage('Trainer session updated successfully')
       } else {
         await axios.post(`${API}/faculty`, payload)
-        setMessage('Session added')
+        setMessage('Trainer session added successfully')
       }
       resetForm()
       fetchSessions()
     } catch (err) {
-      setError('Unable to save session')
+      setError(err?.response?.data?.error || 'Unable to save trainer session')
     }
   }
 
@@ -110,20 +109,20 @@ function FacultySession() {
     setEditingId(session.id)
     setForm({
       batch_id: session.batch_id || '',
-      faculty_name: session.faculty_name || '',
-      session_date: session.session_date || '',
-      subject: session.topic || '',
-      start_time: session.start_time || '',
-      end_time: session.end_time || '',
+      trainer_name: session.trainer_name || session.faculty_name || '',
+      start_date: session.start_date || '',
+      end_date: session.end_date || '',
+      subject: session.subject || session.topic || '',
       notes: session.notes || ''
     })
+    setShowManualForm(true)
   }
 
   const handleDelete = async () => {
     if (!confirmDelete?.id) return
     try {
       await axios.delete(`${API}/faculty/${confirmDelete.id}`)
-      setMessage('Session deleted')
+      setMessage('Trainer session deleted')
       fetchSessions()
     } catch (err) {
       setError('Unable to delete session')
@@ -149,6 +148,9 @@ function FacultySession() {
     const formData = new FormData()
     formData.append('file', selectedFile)
     formData.append('batch_id', selectedBatchId)
+    if (filePassword) {
+      formData.append('password', filePassword)
+    }
 
     try {
       const response = await axios.post(`${API}/faculty/upload-preview`, formData, {
@@ -156,6 +158,7 @@ function FacultySession() {
       })
       setPreviewRows(response.data.preview || [])
       setMessage(`Preview loaded with ${response.data.total_rows} rows`)
+      setError('')
     } catch (err) {
       setError(err?.response?.data?.error || 'Preview failed')
     }
@@ -167,12 +170,13 @@ function FacultySession() {
       const response = await axios.post(`${API}/faculty/import`, {
         batch_id: selectedBatchId,
         rows: previewRows,
-        file_name: selectedFile?.name || 'faculty_session_import'
+        file_name: selectedFile?.name || 'trainer_session_import'
       })
-      setMessage(response.data.message || 'Sessions imported')
+      setMessage(response.data.message || 'Trainer sessions imported successfully')
       setPreviewRows([])
       setSelectedFile(null)
-      reset()
+      setFilePassword('')
+      reset({ batch_id: selectedBatchId })
       fetchSessions()
       fetchHistory()
     } catch (err) {
@@ -186,8 +190,8 @@ function FacultySession() {
     <div className="min-h-screen bg-slate-50 p-6">
       <div className="mx-auto max-w-7xl space-y-6">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900">Faculty Sessions</h1>
-          <p className="text-sm text-slate-500">Manage faculty session schedules</p>
+          <h1 className="text-2xl font-semibold text-slate-900">Trainer Sessions</h1>
+          <p className="text-sm text-slate-500">Manage trainer session schedules and date ranges</p>
         </div>
 
         {message && (
@@ -200,7 +204,7 @@ function FacultySession() {
         <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
           <section className="rounded-xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-slate-700">{editingId ? 'Edit Session' : 'Manual Entry'}</h2>
+              <h2 className="text-sm font-semibold text-slate-700">{editingId ? 'Edit Trainer Session' : 'Manual Entry'}</h2>
               <button
                 type="button"
                 onClick={() => setShowManualForm((prev) => !prev)}
@@ -217,17 +221,63 @@ function FacultySession() {
                     <option key={batch.id} value={batch.id}>{batch.batch_name}</option>
                   ))}
                 </select>
-                <input name="faculty_name" value={form.faculty_name} onChange={handleChange} placeholder="Faculty Name" className="w-full rounded-lg border px-3 py-2 text-sm" />
-                <input type="date" name="session_date" value={form.session_date} onChange={handleChange} className="w-full rounded-lg border px-3 py-2 text-sm" />
-                <input name="subject" value={form.subject} onChange={handleChange} placeholder="Subject" className="w-full rounded-lg border px-3 py-2 text-sm" />
+                <input
+                  name="trainer_name"
+                  value={form.trainer_name}
+                  onChange={handleChange}
+                  placeholder="Trainer Name"
+                  className="w-full rounded-lg border px-3 py-2 text-sm"
+                  required
+                />
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <input type="time" name="start_time" value={form.start_time} onChange={handleChange} className="w-full rounded-lg border px-3 py-2 text-sm" />
-                  <input type="time" name="end_time" value={form.end_time} onChange={handleChange} className="w-full rounded-lg border px-3 py-2 text-sm" />
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-slate-600">Start Date</label>
+                    <input
+                      type="date"
+                      name="start_date"
+                      value={form.start_date}
+                      onChange={handleChange}
+                      className="w-full rounded-lg border px-3 py-2 text-sm"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-slate-600">End Date</label>
+                    <input
+                      type="date"
+                      name="end_date"
+                      value={form.end_date}
+                      onChange={handleChange}
+                      className="w-full rounded-lg border px-3 py-2 text-sm"
+                      required
+                    />
+                  </div>
                 </div>
-                <textarea name="notes" value={form.notes} onChange={handleChange} placeholder="Notes" rows="3" className="w-full rounded-lg border px-3 py-2 text-sm" />
+                <input
+                  name="subject"
+                  value={form.subject}
+                  onChange={handleChange}
+                  placeholder="Subject / Topic"
+                  className="w-full rounded-lg border px-3 py-2 text-sm"
+                  required
+                />
+                <textarea
+                  name="notes"
+                  value={form.notes}
+                  onChange={handleChange}
+                  placeholder="Notes"
+                  rows="3"
+                  className="w-full rounded-lg border px-3 py-2 text-sm"
+                />
                 <div className="flex gap-2">
-                  <button className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white">{editingId ? 'Update' : 'Add'}</button>
-                  {editingId && <button type="button" onClick={resetForm} className="rounded-lg bg-slate-200 px-4 py-2 text-sm">Cancel</button>}
+                  <button className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white">
+                    {editingId ? 'Update' : 'Add'}
+                  </button>
+                  {editingId && (
+                    <button type="button" onClick={resetForm} className="rounded-lg bg-slate-200 px-4 py-2 text-sm">
+                      Cancel
+                    </button>
+                  )}
                 </div>
               </form>
             )}
@@ -246,7 +296,7 @@ function FacultySession() {
               </select>
             </div>
             <div>
-              <h2 className="text-sm font-semibold text-slate-700">Upload Excel</h2>
+              <h2 className="text-sm font-semibold text-slate-700">Upload Trainer Sessions Excel</h2>
             </div>
             <div
               onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }}
@@ -257,9 +307,25 @@ function FacultySession() {
               <input id="faculty-upload" type="file" accept=".xlsx,.xls" className="hidden" onChange={(e) => handleFileSelect(e.target.files?.[0])} />
               <label htmlFor="faculty-upload" className="cursor-pointer">
                 <p className="text-sm font-medium text-slate-700">{selectedFile ? selectedFile.name : 'Drag & drop Excel file or click to browse'}</p>
-                <p className="mt-1 text-xs text-slate-500">Expected columns: Date, Faculty Name, Subject, Start Time, End Time</p>
+                <p className="mt-1 text-xs text-slate-500">Expected columns: Start Date, End Date, Trainer Name, Subject</p>
               </label>
             </div>
+
+            {selectedFile && (
+              <div className="mt-4">
+                <label className="mb-1 block text-xs font-medium text-slate-600">
+                  Excel File Password (if encrypted/password-protected)
+                </label>
+                <input
+                  type="password"
+                  value={filePassword}
+                  onChange={(e) => setFilePassword(e.target.value)}
+                  placeholder="Enter file password if protected"
+                  className="w-full max-w-sm rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+                />
+              </div>
+            )}
+
             <div className="mt-4 flex gap-2">
               <button onClick={handlePreview} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white" disabled={!selectedFile || !selectedBatchId}>Preview</button>
               <button onClick={handleImport} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white" disabled={!previewRows.length || !selectedBatchId}>Import</button>
@@ -270,19 +336,19 @@ function FacultySession() {
                 <table className="min-w-full text-sm">
                   <thead className="bg-slate-50">
                     <tr>
-                      <th className="px-3 py-2 text-left">Date</th>
-                      <th className="px-3 py-2 text-left">Faculty</th>
+                      <th className="px-3 py-2 text-left">Start Date</th>
+                      <th className="px-3 py-2 text-left">End Date</th>
+                      <th className="px-3 py-2 text-left">Trainer Name</th>
                       <th className="px-3 py-2 text-left">Subject</th>
-                      <th className="px-3 py-2 text-left">Time</th>
                     </tr>
                   </thead>
                   <tbody>
                     {previewRows.map((row, idx) => (
                       <tr key={idx} className="border-t">
-                        <td className="px-3 py-2">{row.date}</td>
-                        <td className="px-3 py-2">{row.faculty_name}</td>
+                        <td className="px-3 py-2">{row.start_date || '-'}</td>
+                        <td className="px-3 py-2">{row.end_date || '-'}</td>
+                        <td className="px-3 py-2">{row.trainer_name || row.faculty_name}</td>
                         <td className="px-3 py-2">{row.subject}</td>
-                        <td className="px-3 py-2">{row.start_time} - {row.end_time}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -294,30 +360,30 @@ function FacultySession() {
 
         <section className="rounded-xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-slate-700">Sessions ({totalSessions})</h2>
+            <h2 className="text-sm font-semibold text-slate-700">Trainer Sessions ({totalSessions})</h2>
           </div>
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50">
                 <tr>
-                  <th className="px-3 py-2 text-left">Date</th>
-                  <th className="px-3 py-2 text-left">Faculty</th>
+                  <th className="px-3 py-2 text-left">Start Date</th>
+                  <th className="px-3 py-2 text-left">End Date</th>
+                  <th className="px-3 py-2 text-left">Trainer Name</th>
                   <th className="px-3 py-2 text-left">Subject</th>
-                  <th className="px-3 py-2 text-left">Time</th>
                   <th className="px-3 py-2 text-left">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {sessions.map((session) => (
                   <tr key={session.id} className="border-t">
-                    <td className="px-3 py-2">{session.session_date}</td>
-                    <td className="px-3 py-2">{session.faculty_name}</td>
-                    <td className="px-3 py-2">{session.topic}</td>
-                    <td className="px-3 py-2">{session.start_time || '-'} - {session.end_time || '-'}</td>
+                    <td className="px-3 py-2">{session.start_date || '-'}</td>
+                    <td className="px-3 py-2">{session.end_date || '-'}</td>
+                    <td className="px-3 py-2">{session.trainer_name || session.faculty_name}</td>
+                    <td className="px-3 py-2">{session.subject || session.topic}</td>
                     <td className="px-3 py-2">
                       <div className="flex gap-2">
                         <button onClick={() => handleEdit(session)} className="rounded bg-amber-500 px-2 py-1 text-white">Edit</button>
-                        <button onClick={() => setConfirmDelete({ id: session.id, label: session.faculty_name || 'this session' })} className="rounded bg-rose-600 px-2 py-1 text-white">Delete</button>
+                        <button onClick={() => setConfirmDelete({ id: session.id, label: session.trainer_name || session.faculty_name || 'this session' })} className="rounded bg-rose-600 px-2 py-1 text-white">Delete</button>
                       </div>
                     </td>
                   </tr>
@@ -333,7 +399,7 @@ function FacultySession() {
             {history.map((item) => (
               <div key={item.id} className="rounded-lg border p-3 text-sm">
                 <p className="font-medium">{item.file_name}</p>
-                <p className="text-slate-500">{item.module_name || 'Faculty Upload'} · {item.status}</p>
+                <p className="text-slate-500">{item.module_name || 'Trainer Session Upload'} · {item.status}</p>
                 <p className="text-xs text-slate-500">{item.batch_id ? `Batch ${item.batch_id}` : 'Batch not set'} · {item.total_records ?? 0} records</p>
                 <p className="text-xs text-slate-400">{item.uploaded_at}</p>
               </div>
