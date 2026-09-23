@@ -1,4 +1,4 @@
-# Flexi Training 2.0
+# Flexi Training 4.0
 
 A full-stack training management app with a React/Vite frontend and a Flask backend.
 
